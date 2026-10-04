@@ -34,3 +34,15 @@ This project does not guarantee profit. Automated trading can lose money. Keep P
 Paper Engine sekarang menggunakan mode **opportunity rotation**, bukan sekadar mengganti pair. Setiap scan, engine mengambil kandidat Top Gainers/Top Losers, membaca candle 15M kandidat, menghitung signal/confidence, lalu memilih setup yang lolos. Jika tidak ada posisi, engine dapat langsung membuka PAPER BUY/SHORT. Jika sudah ada posisi, engine hanya melakukan rotasi bila kandidat baru mengungguli setup aktif minimal `HUNTER.switchAdvantage` (default 10 poin), menutup posisi lama, berpindah pair, memuat chart 15M, memvalidasi ulang candle terbaru, lalu langsung mengambil posisi baru. Risk Guard, daily loss limit, consecutive-loss cooldown, dan Kill Switch tetap berlaku.
 
 Parameter utama di frontend: `minConfidence=70`, `switchAdvantage=10`, scan sekitar 15 detik, maksimal 10 kandidat per siklus. Auto Hunter ini sengaja aktif untuk **PAPER mode**; live order tetap memerlukan aksi/manual safety gate.
+
+## Production hardening
+- Server-side market-data proxy for 15M ticker/klines; browser no longer depends on direct REST CORS for scanning.
+- Auto Hunter universe combines high absolute movers and highest-liquidity USDT futures, then validates each candidate with live 15M candles.
+- Fast trigger can enter PAPER on the current live 15M candle when the full confidence gate is satisfied.
+- Paper state, PnL, loss streak and active position persist across a page refresh for the current day.
+- Testnet trading is separately gated by `ALLOW_TESTNET_TRADING` (default true in the example); LIVE trading additionally requires `ALLOW_LIVE_TRADING=true` and a server-only `TRADING_TOKEN`.
+- `MAX_NOTIONAL_USDT` adds a server-side notional safety ceiling.
+- LIVE remains disabled by default. Never put Binance API secrets or `TRADING_TOKEN` in frontend code.
+
+## Validation
+The package passes Node syntax checks for the serverless API, local server and frontend JavaScript extraction. External Binance connectivity must still be validated in the deployed environment because this build environment may not have outbound DNS/network access.
