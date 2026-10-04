@@ -91,8 +91,53 @@ function intervalSec(){return 900}
 function updateUI(){let a=analyze();if(!a)return;$('#lastPrice').textContent=fmtP(a.c.close);$('#ohlc').textContent=`O ${fmtP(a.c.open)} · H ${fmtP(a.c.high)} · L ${fmtP(a.c.low)} · C ${fmtP(a.c.close)}`;$('#candleDir').textContent=a.bull?'CANDLE BULLISH':a.bear?'CANDLE BEARISH':'DOJI';$('#candleDir').className='tag '+(a.bull?'up':a.bear?'down':'yellow');$('#ema').textContent=fmtP(a.e);$('#confidence').textContent=a.score.toFixed(0)+'%';$('#confidenceBar').style.width=a.score+'%';$('#bias').textContent=a.bias;$('#bias').className=a.bias==='LONG'?'up':a.bias==='SHORT'?'down':'yellow';$('#regime').textContent='REGIME '+a.regime;$('#noTrade').textContent=a.allowed?'TRADE CHECK ✓':'NO TRADE';$('#noTrade').className='tag '+(a.allowed?'up':'down');$('#reason').textContent=`S/R ${fmtP(a.support)} / ${fmtP(a.resistance)} · ATR ${fmtP(a.A)} · Volume x${a.vol.toFixed(2)} · Wick U ${a.wU.toFixed(2)} / L ${a.wL.toFixed(2)}`;$('#engineScore').textContent=a.score.toFixed(0);$('#guardReasons').innerHTML=a.reasons.length?a.reasons.map(x=>`<div>⚠ ${x}</div>`).join(''):'<div class="up">✓ Guard conditions clear.</div>';let rem=a.c.time+intervalSec()-Date.now()/1000;$('#candleTimer').textContent='CLOSE '+Math.max(0,Math.floor(rem))+'s';let slPct=Number($('#slPct').value)/100,rr=Number($('#rr').value);let sl=a.bias==='SHORT'?a.c.close*(1+slPct):a.c.close*(1-slPct),tp=a.bias==='SHORT'?a.c.close*(1-slPct*rr):a.c.close*(1+slPct*rr);$('#slOut').textContent=fmtP(sl);$('#tpOut').textContent=fmtP(tp);if(paperPos)updatePosition(a.c.close)}
 function initChart(){chart=LightweightCharts.createChart($('#chart'),{layout:{background:{color:'transparent'},textColor:'#8fa1b6'},grid:{vertLines:{color:'#132030'},horzLines:{color:'#132030'}},rightPriceScale:{borderColor:'#243448'},timeScale:{borderColor:'#243448',timeVisible:true,secondsVisible:false},crosshair:{mode:1}});series=chart.addCandlestickSeries({upColor:'#19d59a',downColor:'#ff5c72',borderUpColor:'#19d59a',borderDownColor:'#ff5c72',wickUpColor:'#19d59a',wickDownColor:'#ff5c72'});emaSeries=chart.addLineSeries({color:'#f4c44f',lineWidth:2});new ResizeObserver(()=>chart.applyOptions({width:$('#chart').clientWidth,height:$('#chart').clientHeight})).observe($('#chart'));$('#chart').addEventListener('click',drawClick)}
 function redraw(){series.setData(candles.map(c=>({time:c.time,open:c.open,high:c.high,low:c.low,close:c.close})));emaSeries.setData(ema(candles.map(c=>c.close)).map((v,i)=>({time:candles[i].time,value:v})));chart.timeScale().fitContent();if(srActive)drawSR();updateUI()}
-async function loadCandles(){let d=await(await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=800`)).json();candles=d.map(x=>({time:Math.floor(x[0]/1000),open:+x[1],high:+x[2],low:+x[3],close:+x[4],volume:+x[5]}));redraw()}
-function connectWS(){try{ws?.close()}catch{}let s=symbol.toLowerCase();ws=new WebSocket(`wss://fstream.binance.com/stream?streams=${s}@kline_15m`);ws.onopen=()=>{$('#conn').textContent='MARKET WS CONNECTED';log('WebSocket 15M connected')};ws.onclose=()=>setTimeout(connectWS,2500);ws.onmessage=e=>{let z=JSON.parse(e.data).data;if(z?.e!=='kline')return;let k=z.k,c={time:Math.floor(k.t/1000),open:+k.o,high:+k.h,low:+k.l,close:+k.c,volume:+k.v};let i=candles.findIndex(x=>x.time===c.time);if(i>=0)candles[i]=c;else candles.push(c);series.update(c);emaSeries.update({time:c.time,value:ema(candles.map(x=>x.close)).at(-1)});updateUI()}}
+async function loadCandles(){
+  const r=await fetch(`/api/market/klines?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store'});
+  if(!r.ok) throw new Error(`Klines API ${r.status}`);
+  const d=await r.json();
+  if(!Array.isArray(d)) throw new Error('Klines response invalid');
+  candles=d.map(x=>({time:Math.floor(x[0]/1000),open:+x[1],high:+x[2],low:+x[3],close:+x[4],volume:+x[5]}));
+  redraw();
+}
+let ws=null, wsReconnectTimer=null, wsGeneration=0;
+function marketWsBase(){
+  return mode==='testnet'?'wss://fstream.binancefuture.com/ws/':'wss://fstream.binance.com/ws/';
+}
+function applyLiveKline(k){
+  const c={time:Math.floor(Number(k.t)/1000),open:+k.o,high:+k.h,low:+k.l,close:+k.c,volume:+k.v};
+  const i=candles.findIndex(x=>x.time===c.time);
+  if(i>=0)candles[i]=c; else candles.push(c);
+  if(candles.length>150)candles=candles.slice(-150);
+  series.update({time:c.time,open:c.open,high:c.high,low:c.low,close:c.close});
+  const ev=ema(candles.map(x=>x.close)).at(-1);
+  if(Number.isFinite(ev))emaSeries.update({time:c.time,value:ev});
+  updateUI();
+  $('#conn').textContent='BINANCE WS LIVE';
+}
+function scheduleWsReconnect(gen){
+  clearTimeout(wsReconnectTimer);
+  wsReconnectTimer=setTimeout(()=>{if(gen===wsGeneration)connectWS()},1500);
+}
+function connectWS(){
+  const gen=++wsGeneration;
+  clearTimeout(wsReconnectTimer);
+  try{ws?.close()}catch{}
+  const url=marketWsBase()+`${symbol.toLowerCase()}@kline_15m`;
+  $('#conn').textContent='BINANCE WS CONNECTING';
+  try{
+    ws=new WebSocket(url);
+    ws.onopen=()=>{if(gen!==wsGeneration)return;$('#conn').textContent='BINANCE WS LIVE';};
+    ws.onmessage=(ev)=>{
+      if(gen!==wsGeneration)return;
+      try{
+        const m=JSON.parse(ev.data);
+        if(m.e==='kline'&&m.k)applyLiveKline(m.k);
+      }catch{}
+    };
+    ws.onerror=()=>{if(gen===wsGeneration)$('#conn').textContent='BINANCE WS ERROR';};
+    ws.onclose=()=>{if(gen===wsGeneration){$('#conn').textContent='BINANCE WS RECONNECTING';scheduleWsReconnect(gen)}};
+  }catch(e){$('#conn').textContent='BINANCE WS ERROR';scheduleWsReconnect(gen)}
+}
 async function switchSymbol(s){if(s===symbol&&candles.length)return;symbol=s;$('#symbolTitle').textContent=s;lastSwitchAt=Date.now();await loadCandles();connectWS();log('Pair → '+s)}
 function drawSR(){drawings.forEach(x=>x.remove?.());drawings=[];let {support,resistance}=sr();for(const v of [support,resistance]){let l=chart.addLineSeries({color:'#4de1ff77',lineWidth:1,lineStyle:2,lastValueVisible:true,priceLineVisible:false});l.setData(candles.slice(-120).map(c=>({time:c.time,value:v})));drawings.push(l)}}
 function drawClick(ev){if(tool==='none')return;let r=$('#chart').getBoundingClientRect(),x=ev.clientX-r.left,t=chart.timeScale().coordinateToTime(x),p=series.coordinateToPrice(ev.clientY-r.top);if(!t||p==null)return;drawings.push({x,p});if(drawings.length<2)return;let a=drawings.at(-2),b=drawings.at(-1),t1=chart.timeScale().coordinateToTime(a.x),t2=chart.timeScale().coordinateToTime(b.x);let l=chart.addLineSeries({color:tool==='fib'?'#f4c44f':'#63a8ff',lineWidth:2});l.setData([{time:t1,value:a.p},{time:t2,value:b.p}]);drawings.push(l);if(tool==='fib'){[.236,.382,.5,.618,.786].forEach(r=>{let f=chart.addLineSeries({color:'#f4c44f55',lineWidth:1,lineStyle:2});f.setData([{time:t1,value:a.p+(b.p-a.p)*r},{time:t2,value:a.p+(b.p-a.p)*r}]);drawings.push(f)})}tool='none';$$('[data-tool]').forEach(x=>x.classList.remove('active'));$('[data-tool="none"]').classList.add('active')}
