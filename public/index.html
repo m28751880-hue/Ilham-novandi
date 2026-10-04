@@ -93,15 +93,17 @@ function initChart(){chart=LightweightCharts.createChart($('#chart'),{layout:{ba
 function redraw(){series.setData(candles.map(c=>({time:c.time,open:c.open,high:c.high,low:c.low,close:c.close})));emaSeries.setData(ema(candles.map(c=>c.close)).map((v,i)=>({time:candles[i].time,value:v})));chart.timeScale().fitContent();if(srActive)drawSR();updateUI()}
 async function loadCandles(){
   const r=await fetch(`/api/market/klines?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store'});
-  if(!r.ok) throw new Error(`Klines API ${r.status}`);
+  if(!r.ok){let msg=`Klines API ${r.status}`;try{const e=await r.json();msg=e.error||msg}catch{};throw new Error(msg)}
   const d=await r.json();
-  if(!Array.isArray(d)) throw new Error('Klines response invalid');
-  candles=d.map(x=>({time:Math.floor(x[0]/1000),open:+x[1],high:+x[2],low:+x[3],close:+x[4],volume:+x[5]}));
+  if(!Array.isArray(d)||!d.length) throw new Error('Klines kosong dari Binance');
+  candles=d.map(x=>({time:Math.floor(x[0]/1000),open:+x[1],high:+x[2],low:+x[3],close:+x[4],volume:+x[5]})).filter(x=>[x.time,x.open,x.high,x.low,x.close].every(Number.isFinite));
+  if(!candles.length) throw new Error('Data candle tidak valid');
   redraw();
 }
 let ws=null, wsReconnectTimer=null, wsGeneration=0;
 function marketWsBase(){
-  return mode==='testnet'?'wss://fstream.binancefuture.com/ws/':'wss://fstream.binance.com/ws/';
+  // USD-M Futures: Testnet uses stream.binancefuture.com; production uses the new Market WS route.
+  return mode==='testnet'?'wss://stream.binancefuture.com/ws/':'wss://fstream.binance.com/market/ws/';
 }
 function applyLiveKline(k){
   const c={time:Math.floor(Number(k.t)/1000),open:+k.o,high:+k.h,low:+k.l,close:+k.c,volume:+k.v};
