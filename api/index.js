@@ -1,6 +1,8 @@
 import crypto from 'crypto';
 
 const BASE = process.env.BINANCE_BASE_URL || 'https://fapi.binance.com';
+const BINANCE_FALLBACKS = ['https://fapi.binance.com','https://fapi1.binance.com','https://fapi2.binance.com','https://fapi3.binance.com','https://fapi4.binance.com'];
+const FETCH_TIMEOUT_MS = Math.max(3000, Number(process.env.BINANCE_FETCH_TIMEOUT_MS || 9000));
 const KEY = process.env.BINANCE_API_KEY || '';
 const SECRET = process.env.BINANCE_API_SECRET || '';
 const MAX_RISK_PCT = Math.min(1, Math.max(0.1, Number(process.env.MAX_RISK_PCT || 1)));
@@ -12,15 +14,29 @@ const ALLOW_TESTNET = String(process.env.ALLOW_TESTNET_TRADING || 'true').toLowe
 function sign(params) {
   return crypto.createHmac('sha256', SECRET).update(new URLSearchParams(params).toString()).digest('hex');
 }
+async function fetchJson(url, options={}) {
+  const ac=new AbortController();
+  const timer=setTimeout(()=>ac.abort(), FETCH_TIMEOUT_MS);
+  try { return await fetch(url,{...options,signal:ac.signal}); }
+  catch(e){ if(e?.name==='AbortError') throw new Error(`Binance timeout ${FETCH_TIMEOUT_MS}ms`); throw e; }
+  finally { clearTimeout(timer); }
+}
 async function binance(path, { method='GET', params={}, signed=false }={}) {
   const p={...params};
   if(signed){ if(!KEY||!SECRET) throw new Error('Binance API credentials belum dikonfigurasi di server.'); p.timestamp=Date.now(); p.recvWindow=5000; p.signature=sign(p); }
   const qs=new URLSearchParams(p).toString();
-  const url=BASE+path+(qs?`?${qs}`:'');
-  const response=await fetch(url,{method,headers:{'X-MBX-APIKEY':KEY}});
-  const text=await response.text(); let data; try{data=JSON.parse(text)}catch{data={raw:text}}
-  if(!response.ok) throw new Error(data?.msg||`Binance HTTP ${response.status}`);
-  return data;
+  const bases = signed ? [BASE] : Array.from(new Set([BASE,...BINANCE_FALLBACKS]));
+  let lastErr='';
+  for(const base of bases){
+    const url=base+path+(qs?`?${qs}`:'');
+    try{
+      const response=await fetchJson(url,{method,headers:{'X-MBX-APIKEY':KEY,'Accept':'application/json'}});
+      const text=await response.text(); let data; try{data=JSON.parse(text)}catch{data={raw:text}};
+      if(!response.ok) throw new Error(data?.msg||`Binance HTTP ${response.status}`);
+      return data;
+    }catch(e){ lastErr=e?.message||String(e); }
+  }
+  throw new Error(`Binance tidak dapat diakses. ${lastErr}`);
 }
 async function readBody(req){
   if(req.body&&typeof req.body==='object') return req.body;
