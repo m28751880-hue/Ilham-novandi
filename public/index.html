@@ -89,7 +89,7 @@ function analyzeData(cs){
 function analyze(){return analyzeData(candles)}
 function intervalSec(){return 900}
 function updateUI(){let a=analyze();if(!a)return;$('#lastPrice').textContent=fmtP(a.c.close);$('#ohlc').textContent=`O ${fmtP(a.c.open)} · H ${fmtP(a.c.high)} · L ${fmtP(a.c.low)} · C ${fmtP(a.c.close)}`;$('#candleDir').textContent=a.bull?'CANDLE BULLISH':a.bear?'CANDLE BEARISH':'DOJI';$('#candleDir').className='tag '+(a.bull?'up':a.bear?'down':'yellow');$('#ema').textContent=fmtP(a.e);$('#confidence').textContent=a.score.toFixed(0)+'%';$('#confidenceBar').style.width=a.score+'%';$('#bias').textContent=a.bias;$('#bias').className=a.bias==='LONG'?'up':a.bias==='SHORT'?'down':'yellow';$('#regime').textContent='REGIME '+a.regime;$('#noTrade').textContent=a.allowed?'TRADE CHECK ✓':'NO TRADE';$('#noTrade').className='tag '+(a.allowed?'up':'down');$('#reason').textContent=`S/R ${fmtP(a.support)} / ${fmtP(a.resistance)} · ATR ${fmtP(a.A)} · Volume x${a.vol.toFixed(2)} · Wick U ${a.wU.toFixed(2)} / L ${a.wL.toFixed(2)}`;$('#engineScore').textContent=a.score.toFixed(0);$('#guardReasons').innerHTML=a.reasons.length?a.reasons.map(x=>`<div>⚠ ${x}</div>`).join(''):'<div class="up">✓ Guard conditions clear.</div>';let rem=a.c.time+intervalSec()-Date.now()/1000;$('#candleTimer').textContent='CLOSE '+Math.max(0,Math.floor(rem))+'s';let slPct=Number($('#slPct').value)/100,rr=Number($('#rr').value);let sl=a.bias==='SHORT'?a.c.close*(1+slPct):a.c.close*(1-slPct),tp=a.bias==='SHORT'?a.c.close*(1-slPct*rr):a.c.close*(1+slPct*rr);$('#slOut').textContent=fmtP(sl);$('#tpOut').textContent=fmtP(tp);if(paperPos)updatePosition(a.c.close)}
-function setChartStatus(msg,ok=false){const e=$('#chartStatus');if(e){e.innerHTML=ok?'':`<span><b>${msg}</b></span>`;e.style.display=ok?'none':'flex'}$('#conn').textContent=ok?'CHART LIVE':'CHART · '+msg.toUpperCase()}
+function setChartStatus(msg,ok=false){const e=$('#chartStatus');if(e){e.innerHTML=ok?'':`<span><b>${msg}</b></span>`;e.style.display=ok?'none':'flex'}$('#conn').textContent=ok?'CHART LIVE':'CHART · '+msg.toUpperCase(); if(!ok) log('CHART: '+msg)}
 function initChart(){
   if(!window.LightweightCharts||typeof LightweightCharts.createChart!=='function')throw new Error('Library chart gagal dimuat');
   const el=$('#chart');
@@ -108,16 +108,27 @@ function redraw(){
   const ev=ema(candles.map(c=>c.close));emaSeries.setData(candles.map((c,i)=>({time:c.time,value:ev[i]})));
   chart.timeScale().fitContent();if(srActive)drawSR();setChartStatus('',true);updateUI();
 }
+async function fetchWithTimeout(url,ms=9000){const ac=new AbortController();const timer=setTimeout(()=>ac.abort(),ms);try{return await fetch(url,{cache:'no-store',signal:ac.signal})}catch(e){if(e?.name==='AbortError')throw new Error('timeout');throw e}finally{clearTimeout(timer)}}
 async function loadCandles(){
   setChartStatus('Mengambil data candle…');
+  const directHosts=['fapi.binance.com','fapi1.binance.com','fapi2.binance.com','fapi3.binance.com','fapi4.binance.com'];
+  const urls=[`/api/market/klines?symbol=${encodeURIComponent(symbol)}`,...directHosts.map(h=>`https://${h}/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=15m&limit=150`)];
   let d=null,lastErr='';
-  const urls=[`/api/market/klines?symbol=${encodeURIComponent(symbol)}`,`https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=15m&limit=150`];
-  for(const url of urls){try{const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error(`HTTP ${r.status}`);const j=await r.json();if(!Array.isArray(j)||!j.length)throw new Error('Klines kosong');d=j;break}catch(e){lastErr=e.message}}
-  if(!d)throw new Error('Chart gagal mengambil data: '+lastErr);
+  for(const url of urls){
+    try{
+      const r=await fetchWithTimeout(url,9000); if(!r.ok)throw new Error(`HTTP ${r.status}`);
+      const j=await r.json(); if(!Array.isArray(j)||!j.length)throw new Error('Klines kosong');
+      const test=j.map(x=>[Number(x?.[0]),Number(x?.[1]),Number(x?.[2]),Number(x?.[3]),Number(x?.[4])]);
+      if(test.length<30||test.some(x=>x.some(v=>!Number.isFinite(v))))throw new Error('Data candle invalid');
+      d=j; break;
+    }catch(e){lastErr=`${url.startsWith('/api')?'API':'Binance'}: ${e?.message||e}`}
+  }
+  if(!d)throw new Error('Chart gagal mengambil data candle. '+lastErr);
   candles=d.map(x=>({time:Math.floor(Number(x[0])/1000),open:Number(x[1]),high:Number(x[2]),low:Number(x[3]),close:Number(x[4]),volume:Number(x[5])})).filter(x=>[x.time,x.open,x.high,x.low,x.close].every(Number.isFinite));
   if(candles.length<30)throw new Error('Data candle tidak cukup');
   redraw();
 }
+
 let ws=null, wsReconnectTimer=null, wsGeneration=0;
 function marketWsBase(){
   // USD-M Futures: Testnet uses stream.binancefuture.com; production uses the new Market WS route.
