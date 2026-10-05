@@ -8,8 +8,6 @@ const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC=path.join(__dirname,'public');
 const PORT=Number(process.env.PORT||8787);
 const BASE=process.env.BINANCE_BASE_URL||'https://fapi.binance.com';
-const BINANCE_FALLBACKS=['https://fapi.binance.com','https://fapi1.binance.com','https://fapi2.binance.com','https://fapi3.binance.com','https://fapi4.binance.com'];
-const FETCH_TIMEOUT_MS=Math.max(3000,Number(process.env.BINANCE_FETCH_TIMEOUT_MS||9000));
 const KEY=process.env.BINANCE_API_KEY||'';
 const SECRET=process.env.BINANCE_API_SECRET||'';
 const ALLOW_LIVE=String(process.env.ALLOW_LIVE_TRADING||'false').toLowerCase()==='true';
@@ -18,13 +16,11 @@ const TRADING_TOKEN=process.env.TRADING_TOKEN||'';
 const MAX_NOTIONAL_USDT=Number(process.env.MAX_NOTIONAL_USDT||250);
 
 function sign(params){return crypto.createHmac('sha256',SECRET).update(new URLSearchParams(params).toString()).digest('hex')}
-async function fetchJson(url,options={}){const ac=new AbortController();const timer=setTimeout(()=>ac.abort(),FETCH_TIMEOUT_MS);try{return await fetch(url,{...options,signal:ac.signal})}catch(e){if(e?.name==='AbortError')throw Error(`Binance timeout ${FETCH_TIMEOUT_MS}ms`);throw e}finally{clearTimeout(timer)}}
 async function binance(pth,{method='GET',params={},signed=false}={}){
   const p={...params};
   if(signed){if(!KEY||!SECRET)throw Error('Binance API credentials belum dikonfigurasi di server.');p.timestamp=Date.now();p.recvWindow=5000;p.signature=sign(p)}
-  const qs=new URLSearchParams(p).toString(); const bases=signed?[BASE]:Array.from(new Set([BASE,...BINANCE_FALLBACKS])); let lastErr='';
-  for(const base of bases){try{const url=base+pth+(qs?'?'+qs:'');const r=await fetchJson(url,{method,headers:{'X-MBX-APIKEY':KEY,'Accept':'application/json'}});const text=await r.text();let data;try{data=JSON.parse(text)}catch{data={raw:text}};if(!r.ok)throw Error(data?.msg||`Binance HTTP ${r.status}`);return data}catch(e){lastErr=e?.message||String(e)}}
-  throw Error(`Binance tidak dapat diakses. ${lastErr}`);
+  const qs=new URLSearchParams(p).toString(); const url=BASE+pth+(qs?'?'+qs:'');
+  const r=await fetch(url,{method,headers:{'X-MBX-APIKEY':KEY}}); const text=await r.text(); let data; try{data=JSON.parse(text)}catch{data={raw:text}}; if(!r.ok)throw Error(data?.msg||`Binance HTTP ${r.status}`); return data;
 }
 function send(res,status,type,body){res.writeHead(status,{'Content-Type':type,'Cache-Control':'no-store','Access-Control-Allow-Origin':'*'});res.end(body)}
 function json(res,status,obj){send(res,status,'application/json',JSON.stringify(obj))}
