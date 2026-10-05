@@ -1,4 +1,4 @@
-# ilham novandi Futures Command Center — Chart Fixed v1.1.1
+# ilham novandi Futures Command Center — Chart Fixed v1.1.2
 
 Perbaikan chart: validasi library, loading state, direct Binance REST fallback, candle deduplication/sorting, responsive resize, dan WebSocket endpoint USD-M yang benar.
 # ilham novandi — Futures Command Center
