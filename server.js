@@ -27,7 +27,7 @@ async function marketBinance(pth,options={}){try{return await binance(pth,{...op
 function send(res,status,type,body){res.writeHead(status,{'Content-Type':type,'Cache-Control':'no-store','Access-Control-Allow-Origin':'*'});res.end(body)}
 function json(res,status,obj){send(res,status,'application/json',JSON.stringify(obj))}
 async function body(req){return await new Promise((resolve,reject)=>{let b='';req.on('data',d=>{b+=d;if(b.length>100000)reject(Error('body too large'))});req.on('end',()=>{try{resolve(b?JSON.parse(b):{})}catch(e){reject(e)}});req.on('error',reject)})}
-const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json'};
+const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.webmanifest':'application/manifest+json; charset=utf-8','.png':'image/png'};
 const server=http.createServer(async(req,res)=>{
  try{
   const u=new URL(req.url,`http://${req.headers.host}`);
