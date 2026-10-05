@@ -44,5 +44,13 @@ Parameter utama di frontend: `minConfidence=70`, `switchAdvantage=10`, scan seki
 - `MAX_NOTIONAL_USDT` adds a server-side notional safety ceiling.
 - LIVE remains disabled by default. Never put Binance API secrets or `TRADING_TOKEN` in frontend code.
 
+## Chart reliability fix (v9)
+- Vercel API routing uses a catch-all serverless function (`api/[...path].js`) instead of rewriting `/api/*` to `api/index.js`. This prevents the market endpoints from being rewritten into a path the handler cannot recognize.
+- Public 15M market data is separated from the trading base URL, so Testnet API credentials cannot break the chart.
+- Initial 15M history retries three times and requires at least 30 valid candles.
+- WebSocket market data uses Binance's current USDⓈ-M `/market/ws/` route.
+- A REST 15M polling fallback refreshes the live candle every 2.5 seconds if the browser WebSocket is unavailable.
+- WebSocket messages support both raw and wrapped/combined payloads.
+
 ## Validation
 The package passes Node syntax checks for the serverless API, local server and frontend JavaScript extraction. External Binance connectivity must still be validated in the deployed environment because this build environment may not have outbound DNS/network access.
